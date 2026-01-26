@@ -3,32 +3,24 @@
 Parameter Generation
 ====================
 
-This module generates **physically motivated microlensing event-parameter tables** by combining a TRILEGAL stellar catalog query from **Astro Data Lab** (``lsst_sim.simdr2``, single stars only), and a user-defined **priors** for parameters not provided (or not yet inferred) from TRILEGAL.
+This module generates physically motivated microlensing event-parameter tables by combining a TRILEGAL stellar catalog query from Astro Data Lab (the ``lsst_sim.simdr2``, single stars only, but there is also a binary table!), and a user-defined priors for parameters not provided (or not yet inferred) from TRILEGAL.
 
 The main function is :func:`MicroLIA_Sim.param_generation.generate_trilegal_event_table`, which returns a :class:`pandas.DataFrame` with one row per simulated event.
 
-These event parameters can then be used to simulate the microlensing events!
+These event parameters can then be used to simulate the microlensing events using the microlensing module!
 
 Workflow overview
 -----------------
 
 The procedure for generating the events dataframe is as follows:
 
-1. Authenticate with Astro Data Lab (token reuse if possible, it is interactive so not yet cluster-friendly).
+1. Authenticate with Astro Data Lab (it is interactive so not yet cluster-friendly, will work on this!).
 2. Query a TRILEGAL star sample near (RA, Dec) with optional distance-modulus cut.
 3. Construct source–lens pairs with the required distance ordering (foreground lens).
 4. Draw user priors (e.g., ``t0``, ``u0``, lens mass).
-5. Compute derived microlensing quantities (``tE``, ``rho``, ``theta_E``, optional parallax).
-6. Attach per-band photometry (optionally using a blending prior) and model-specific parameters.
+5. Compute derived microlensing quantities (``tE``, ``rho``, ``theta_E``, parallax).
+6. Attach per-band photometry (and blending mags if blending is enabled) and model-specific parameters.
 
-Authentication
---------------
-
-The helper :func:`~MicroLIA_Sim.param_generation.datalab_login` attempts to reuse a cached token via ``dl.authClient.getToken()`` and falls back to interactive login if needed.
-
-.. warning::
-
-   Interactive login (username/password prompts) is not suitable for non-interactive batch jobs. For cluster use, ensure a valid token is available on disk (or pre-authenticate before submitting). Will make this more flexible in the future!
 
 Core concepts
 -------------
