@@ -150,6 +150,8 @@ If you do not pass ``time_grid_jd``, the module generates an adaptive grid that 
 - dense near the peak (``t0 ± peak_width_factor * tE``)
 - sparse in the wings (out to ``t0 ± window_size_days``)
 
+where ``peak_width_factor`` is set to 5.0 (sets the half-width of the densely sampled core as ``peak_width_factor * tE_days``) and ``window_size_days`` is set to 4000 days -- these arguments are not currently tunable!
+
 .. note::
 
    The ``simulate_perfect_event`` fuctions accepts ``t0_mjd`` but ``time_grid_jd`` is **JD**. An internal ``MJD_OFFSET = 2400000.5`` is applied. This is something I will update soon to avoid confusion...

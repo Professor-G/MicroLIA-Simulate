@@ -140,6 +140,7 @@ Minimal PSPL example
        GenerationConfig,
        default_priors,
        generate_trilegal_event_table,
+       Uniform, LogUniform, PerBandUniform
    )
 
    # Authenticate
@@ -156,12 +157,12 @@ Minimal PSPL example
    priors = default_priors(cfg)
 
    # Manual overrides
-   pri["t0"] = Uniform(61000.0, 62000.0) # Could ensure signal with adaptive t0? (within +- of some point)
-   pri["u0"] = Uniform(0.0, 0.5)
-   pri["lens_mass_solar"] = Uniform(0.001, 100.0)
-   pri["q"] = LogUniform(1e-5, 1e-2) # Markus said there is a planet mass ratio function!
-   pri["semi_major_axis_au"] = Uniform(0.5, 10.0) # Markus noted that 0.1-10 is most common
-   pri["blend_g"] = PerBandUniform(0.0, 0.3) # 0-1 is fine -- 0 for NFW/Boson? 
+   priors["t0"] = Uniform(61000.0, 62000.0) # Could ensure signal with adaptive t0? (within +- of some point)
+   priors["u0"] = Uniform(0.0, 0.5)
+   priors["lens_mass_solar"] = Uniform(0.001, 100.0)
+   priors["q"] = LogUniform(1e-5, 1e-2) # Markus said there is a planet mass ratio function!
+   priors["semi_major_axis_au"] = Uniform(0.5, 10.0) # Markus noted that 0.1-10 is most common
+   priors["blend_g"] = PerBandUniform(0.0, 0.3) # 0-1 is fine -- 0 for NFW/Boson? 
 
    df = generate_trilegal_event_table(
        n_events=5000,
@@ -197,20 +198,20 @@ USBL with physical separation (semi-major axis prior)
    )
 
    # Best to just start with our default priors then manually override whatever we need
-   pri = default_priors(cfg)
+   priors = default_priors(cfg)
 
    # Manual override
-   pri["lens_mass_solar"] = Uniform(0.001, 100.0)
+   priors["lens_mass_solar"] = Uniform(0.001, 100.0)
 
    # Provide a semi-major axis prior (AU) so s_physical can be computed
-   pri["semi_major_axis_au"] = Uniform(0.1, 10.0)
+   priors["semi_major_axis_au"] = Uniform(0.1, 10.0)
 
    df = generate_trilegal_event_table(
        n_events=20000,
        ra=270.66,
        dec=-35.70,
        cfg=cfg,
-       priors=pri,
+       priors=priors,
        random_seed=1909,
    )
 
@@ -228,14 +229,14 @@ Turning off parallax
        custom_blending=True,
    )
 
-   pri = default_priors(cfg)
+   priors = default_priors(cfg)
 
    df = generate_trilegal_event_table(
        n_events=1000,
        ra=10.0,
        dec=-10.0,
        cfg=cfg,
-       priors=pri,
+       priors=priors,
        random_seed=1909,
    )
 

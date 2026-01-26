@@ -15,7 +15,7 @@ The RR Lyrae template set used here is from `BaezaVillagra et al 2025 <https://w
 Quick start
 -----------
 
-The main entry point is ``simulate_rrlyae()``. It returns a dict mapping each band to simulated magnitudes evaluated at the provided observation times.
+The main function is ``simulate_rrlyae()``. It returns a dict mapping each band to simulated magnitudes evaluated at the provided observation times.
 
 .. code-block:: python
 
