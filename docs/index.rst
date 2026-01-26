@@ -39,7 +39,7 @@ User Guide
 Detailed guides on how to generate parameters and simulate light curves.
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: User Guide
 
    source/Parameter Generation
