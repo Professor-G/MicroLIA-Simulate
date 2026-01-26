@@ -21,8 +21,6 @@ setup(
         'Topic :: Scientific/Engineering :: Physics',
         'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.10',
-        'Programming Language :: Python :: 3.11',
         'Programming Language :: Python :: 3.12',
     ],
     packages=find_packages(), 
@@ -35,6 +33,6 @@ setup(
         'pyLIMA==1.9.8', # The core microlensing simulation engine
         'astro-datalab>=2.22.1', # To query TRILEGAL 
     ],   
-    python_requires='>=3.10',
+    python_requires='>=3.12',
     include_package_data=True,
 )
