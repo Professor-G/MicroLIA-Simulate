@@ -1,0 +1,7 @@
+numpy
+pandas
+scipy
+astropy
+matplotlib
+pyLIMA==1.9.8
+astro-datalab>=2.22.1
