@@ -11,7 +11,7 @@ Welcome to MicroLIA-Simulate's documentation!
 
    This documentation is actively being developed!
 
-**MicroLIA-Simulate** is the dedicated simulation API for the **MicroLIA** framework. It serves as a standalone engine for generating synthetic astronomical datasets, designed as a lightweight sister package to the main analysis tools.
+MicroLIA-Simulate is the dedicated simulation API for the MicroLIA framework, serving as a standalone engine for generating synthetic lightcurves for astronomical datasets.
 
 Quick Start
 ===========
@@ -19,7 +19,7 @@ Quick Start
 Installation
 ------------
 
-MicroLIA-Simulate requires **Python 3.10+**. Install the latest stable release via pip:
+MicroLIA-Simulate requires **Python 3.12+**. Install the latest stable release via pip:
 
 .. code-block:: bash
 
