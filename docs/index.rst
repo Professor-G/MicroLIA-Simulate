@@ -42,16 +42,12 @@ Detailed guides on how to generate parameters and simulate light curves.
    :maxdepth: 2
    :caption: User Guide
 
-   source/Microlensing Simulations
    source/Parameter Generation
-
-API Reference
-=============
-
-Complete documentation of the modules and functions.
+   source/Microlensing Simulations
+   source/Variable Stars Simulations
 
 .. toctree::
-   :maxdepth: 2
-   :caption: Python API
+   :maxdepth: 1
+   :caption: API Reference
 
    source/MicroLIA_Sim
