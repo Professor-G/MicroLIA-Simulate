@@ -3,7 +3,7 @@
 Microlensing Simulations
 ========================
 
-This module provides the functionality for generating **noise-free** (“perfect”) multi-band microlensing light curves with `pyLIMA`.
+This module provides the functionality for generating noise-free(“perfect”) multi-band microlensing light curves with `pyLIMA`.
 
 The primary function is:
 
