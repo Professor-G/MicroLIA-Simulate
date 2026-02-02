@@ -35,4 +35,7 @@ setup(
     ],   
     python_requires='>=3.12',
     include_package_data=True,
+    package_data={
+        "MicroLIA_Sim": ["data/**/*"],
+    },
 )
