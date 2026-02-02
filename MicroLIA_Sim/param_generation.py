@@ -85,14 +85,14 @@ def query_trilegal_stars(
     pandas.DataFrame
         Table of TRILEGAL sources with lowercase column names, containing:
         - Raw queried columns:
-          `ra, dec, mu0, pmracosd, pmdec, umag, gmag, rmag, imag, zmag, ymag, logl, logte`
+          `ra, dec, mu0, pmracosd, pmdec, umag, gmag, rmag, imag, zmag, ymag, logl, logte, mass`
         - Added columns:
           `distance_pc, mu_total`
     """
     mu0_max = 5 * np.log10(float(ds_max_pc)) - 5
 
     query = f"""
-        SELECT ra, dec, mu0, pmracosd, pmdec, umag, gmag, rmag, imag, zmag, ymag, logl, logte
+        SELECT ra, dec, mu0, pmracosd, pmdec, umag, gmag, rmag, imag, zmag, ymag, logl, logte, mass
         FROM lsst_sim.simdr2
         WHERE q3c_radial_query(ra, dec, {ra}, {dec}, {radius_deg})
           AND mu0 < ({mu0_max})
@@ -240,7 +240,8 @@ def generate_physical_pairs(
             "mu_rel": mu_rel, # mas/yr
             "traj_angle": traj_angle, # rad (may be nan)
             "distance_source": d_source, # pc
-            "distance_blend": float(lens["distance_pc"]),  # pc
+            "distance_blend": float(lens["distance_pc"]), # pc
+            "mass_blend": float(lens["mass"]), # in Msun
             "logl_source": float(source["logl"]),
             "logte_source": float(source["logte"]),
             "ra": float(source["ra"]),
@@ -771,7 +772,8 @@ class GenerationConfig:
     # This is for USBL only -- if True and semi_major_axis prior provided, use s_physical, otherwise use the s prior
     use_physical_s: bool = True
 
-
+    # Adding this to enable option to use the actual TRILEGAL lens masses! 
+    use_trilegal_mass: bool = False
 
 def required_prior_names(cfg: GenerationConfig) -> List[str]:
     """
@@ -803,7 +805,11 @@ def required_prior_names(cfg: GenerationConfig) -> List[str]:
         Names of required priors. The base set always includes t0, u0 and the lens mass ("lens_mass_solar"").
         Additional requirements depend on ``cfg``.
     """
-    req = ["t0", "u0", "lens_mass_solar"]
+    req = ["t0", "u0"]
+
+    # Only require lens_mass_solar if not using the TRILEGAL catalog mass
+    if not cfg.use_trilegal_mass:
+        req.append("lens_mass_solar")
 
     # angle which is only when enable_parallax=True and physical_vectors=False (since traj_angle is NaN)
     if cfg.enable_parallax and (not cfg.physical_vectors):
@@ -884,8 +890,11 @@ def default_priors(cfg: GenerationConfig) -> Dict[str, Prior]:
     pri: Dict[str, Prior] = {
         "t0": Uniform(60000.0, 63650.0),
         "u0": Uniform(0.0, 0.3),
-        "lens_mass_solar": Uniform(0.1, 1.0),
     }
+
+    # Only add default mass prior if we aren't using TRILEGAL's mass
+    if not cfg.use_trilegal_mass:
+        pri["lens_mass_solar"] = Uniform(0.1, 1.0)
 
     if cfg.enable_parallax and (not cfg.physical_vectors):
         pri["traj_angle_rad"] = Uniform(0.0, 2 * np.pi)
@@ -943,8 +952,11 @@ def validate_priors(cfg: GenerationConfig, priors: Dict[str, Prior]) -> None:
             "Missing required priors for this configuration:" + "\n  - " + "\n  - ".join(missing))
 
     # helpful warning for unused priors
-    used = set()
-    used.update(["t0", "u0", "lens_mass_solar"])
+    used = set(["t0", "u0"])
+
+    if (not cfg.use_trilegal_mass) or ("lens_mass_solar" in priors):
+        used.add("lens_mass_solar")
+
     if cfg.enable_parallax and (not cfg.physical_vectors):
         used.add("traj_angle_rad")
     if cfg.custom_blending:
@@ -990,6 +1002,9 @@ def describe_requirements(cfg: GenerationConfig, priors: Optional[Dict[str, Prio
             lines.append("  - semi_major_axis_au OR s (USBL separation source)")
         else:
             lines.append(f"  - {name}")
+
+    if cfg.use_trilegal_mass:
+        lines.append("Using TRILEGAL catalog values for the lens mass...")
 
     if priors is not None:
         lines.append("\nProvided priors:")
@@ -1151,7 +1166,22 @@ def generate_trilegal_event_table(
         # Sample the common priors
         t0 = float(priors["t0"].sample(rng))
         u0 = float(priors["u0"].sample(rng))
-        lens_mass = float(priors["lens_mass_solar"].sample(rng))
+
+        if cfg.use_trilegal_mass:
+            # Use the actual cataloged mass
+            lens_mass = float(p["mass_blend"])
+
+            # I don't think TRILEGAL would return NaN masses but just in case...
+            if (not np.isfinite(lens_mass)) or (lens_mass <= 0.0):
+                if "lens_mass_solar" in priors:
+                    lens_mass = float(priors["lens_mass_solar"].sample(rng))
+                else:
+                    continue # Just skip the event
+
+        else:
+            # Use the prior
+            lens_mass = float(priors["lens_mass_solar"].sample(rng))
+
 
         # Only sample trajectory angle if parallax is enabled and there are no physical vectors
         angle = None
