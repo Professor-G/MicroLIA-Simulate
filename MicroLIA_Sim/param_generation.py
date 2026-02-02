@@ -358,16 +358,25 @@ def calculate_trilegal_physics(
     pi_E_mag = (pi_rel / theta_E_rad).decompose().value
 
     traj_angle = row.get("traj_angle", np.nan)
+
+    # Need to determine the angle (ang) or set to NaN to avoid errors!
     if pd.notnull(traj_angle):
         ang = float(traj_angle)
     else:
         if angle_rad is None:
-            # must provide the prior when physical_vectors=False
-            return None
-        ang = float(angle_rad)
+            # If no angle is provided (parallax off), piEN/piEE will not be computed!
+            ang = np.nan
+        else:
+            ang = float(angle_rad)
 
-    piEN = float(pi_E_mag * np.sin(ang))
-    piEE = float(pi_E_mag * np.cos(ang))
+    # Compute vector components only if an angle was input
+    if np.isnan(ang):
+        piEN = np.nan
+        piEE = np.nan
+    else:
+        piEN = float(pi_E_mag * np.sin(ang))
+        piEE = float(pi_E_mag * np.cos(ang))
+
     pi_rel_mas = float(pi_rel.to_value(u.mas, equivalencies=u.dimensionless_angles()))
 
     s_val = None
@@ -999,12 +1008,10 @@ def generate_trilegal_event_table(
     cfg: GenerationConfig,
     priors: Optional[Dict[str, Prior]] = None,
     random_seed: Optional[int] = None,
-    # TRILEGAL query controls
     radius_deg: float = 0.2,
     query_limit: int = 50000,
     ds_max_pc: float = 10000.0,
     timeout: int = 600,
-    # pairing controls
     min_dist_pc: float = 10.0,
     offset_pc: float = 0.1,
 ) -> pd.DataFrame:
@@ -1146,10 +1153,9 @@ def generate_trilegal_event_table(
         u0 = float(priors["u0"].sample(rng))
         lens_mass = float(priors["lens_mass_solar"].sample(rng))
 
-        # angle (only needed when traj_angle is NaN and parallax enabled)
+        # Only sample trajectory angle if parallax is enabled and there are no physical vectors
         angle = None
-        # We need an angle for the calculation, even if this is not used for parallax later
-        if not cfg.physical_vectors: 
+        if cfg.enable_parallax and (not cfg.physical_vectors): 
             angle = float(priors["traj_angle_rad"].sample(rng))
 
         # optional semi-major axis (for USBL physical s)
