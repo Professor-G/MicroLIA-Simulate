@@ -26,9 +26,9 @@ The main function is ``simulate_rrlyae()``. It returns a dict mapping each band 
    rng = np.random.default_rng(1909)
 
    # Example observation times (days; e.g., MJD)
-   t_g = 7000.0 + np.sort(rng.uniform(0, 365, size=200))
-   t_r = 7000.0 + np.sort(rng.uniform(0, 365, size=200))
-   t_i = 7000.0 + np.sort(rng.uniform(0, 365, size=200))
+   t_g = 7000.0 + np.sort(rng.uniform(0, 365, size=500))
+   t_r = 7000.0 + np.sort(rng.uniform(0, 365, size=500))
+   t_i = 7000.0 + np.sort(rng.uniform(0, 365, size=500))
 
    times = {"g": t_g, "r": t_r, "i": t_i}
 
@@ -41,9 +41,9 @@ The main function is ``simulate_rrlyae()``. It returns a dict mapping each band 
        rng=rng, # controls random phase zero-point (T0) and template
    )
 
-   plt.plot(t_g, mags["g"], "o", label="g")
-   plt.plot(t_r, mags["r"], "o", label="r")
-   plt.plot(t_i, mags["i"], "o", label="i")
+   plt.plot(t_g, mags["g"], "go", label="g")
+   plt.plot(t_r, mags["r"], "r*", label="r")
+   plt.plot(t_i, mags["i"], "k.", label="i")
    plt.gca().invert_yaxis()
    plt.legend()
    plt.show()
