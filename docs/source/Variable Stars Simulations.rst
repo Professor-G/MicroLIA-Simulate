@@ -57,11 +57,11 @@ If ``period`` is not provided:
 * ``bailey == 2`` (RRc): :math:`P \sim \mathcal{N}(0.33, 0.10)` days
 * ``bailey == 3`` (Cepheid-like): :math:`P = 10^{X}`, where :math:`X \sim \mathrm{LogNormal}(0.0, 0.2)`
 
+.. note::
+
+   In the current implementation, ``bailey == 3`` uses the RRc templates and is thus intended as an approximation.
+
 Reproducibility
 ^^^^^^^^^^^^^^^
 
 There are two random elements, the template selection and the phase zero-point. Passing a seeded ``rng`` makes these reproducible.
-
-.. note::
-
-   In the current implementation, ``bailey == 3`` uses the RRc templates and is intended as an approximation.
