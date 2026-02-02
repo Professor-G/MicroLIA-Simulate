@@ -19,6 +19,8 @@ def load_rr_template_txt(path: str | Path) -> Dict[str, Dict[str, np.ndarray]]:
     Mag,Phase,Band
     17.30,0.000,g
     17.31,0.001,g
+    15.24,0.001,r
+    17.65,0.001,g
     ...
 
     Parameters
@@ -94,26 +96,37 @@ def _interp_periodic(
     phase_query: np.ndarray,
 ) -> np.ndarray:
     """
-    Interpolate template magnitudes as a function of phase in [0, 1).
+    Linearly interpolate a phased template onto query phases, treating phase as periodic.
 
-    Assumes:
-    - phase_templ is sorted and spans roughly [0, ~1].
-    - phase_query is in [0, 1) (we enforce this with modulo 1).
+    Parameters
+    ----------
+    phase_templ : ndarray
+        1D array of template phases.
+    mag_templ : ndarray
+        1D array of template magnitudes evaluated at `phase_templ`. Must have the
+        same shape as `phase_templ`.
+    phase_query : ndarray
+        1D array of phases at which to evaluate the template. Values may be outside
+        [0, 1) as they are wrapped into [0, 1).
 
-    Uses linear interpolation.
+    Returns
+    -------
+    ndarray
+        Interpolated magnitudes evaluated at `phase_query` (wrapped to [0, 1)).
+        Shape matches `phase_query`.
     """
     # Ensure arrays
     phase_templ = np.asarray(phase_templ, dtype=float)
     mag_templ = np.asarray(mag_templ, dtype=float)
     phase_query = np.asarray(phase_query, dtype=float) % 1.0
 
-    # phase_templ should be sorted already, but just to be safe:
+    # phase_templ should be sorted already, but just to be safe...
     order = np.argsort(phase_templ)
     phase_sorted = phase_templ[order]
     mag_sorted = mag_templ[order]
 
     # np.interp requires ascending x; query points must lie within range
-    # Template goes up to ~1.0–1.01, query is in [0,1), so this is fine.
+    # Template goes up to ~1.0–1.01, query is in [0,1), so should be fine
     mag_interp = np.interp(phase_query, phase_sorted, mag_sorted)
     return mag_interp
 
