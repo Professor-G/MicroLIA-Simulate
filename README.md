@@ -12,9 +12,9 @@ MicroLIA-Simulate requires Python 3.12+, and can be installed via pip:
     $ pip install MicroLIA-Simulate
 ```
 
-# Documentation
+# [Documentation](https://microlia-simulate.readthedocs.io/en/latest/)
 
-For technical details, check out the Documentation.
+For technical details, check out the [Documentation](https://microlia-simulate.readthedocs.io/en/latest/).
 
 
 # How to Contribute?
