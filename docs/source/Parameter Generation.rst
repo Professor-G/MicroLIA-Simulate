@@ -17,7 +17,7 @@ The procedure for generating the events dataframe is as follows:
 1. Authenticate with Astro Data Lab (it is interactive so not yet cluster-friendly, will work on this!).
 2. Query a TRILEGAL star sample near (RA, Dec) with optional distance-modulus cut.
 3. Construct source–lens pairs with the required distance ordering (foreground lens).
-4. Draw user priors (e.g., ``t0``, ``u0``, lens mass).
+4. Draw user priors (e.g., ``t0``, ``u0``, and optionally the lens mass).
 5. Compute derived microlensing quantities (``tE``, ``rho``, ``theta_E``, parallax).
 6. Attach per-band photometry (and blending mags if blending is enabled) and model-specific parameters.
 
@@ -35,6 +35,8 @@ Generation configuration
 - ``physical_vectors``: use catalog proper-motion components (physically consistent trajectory angle)
 - ``custom_blending``: store baseline total magnitudes + per-band blend ratios, or store source+blend mags directly
 - ``use_physical_s`` (USBL only): compute a physical separation from a semi-major axis prior when provided
+- ``use_trilegal_mass``: if ``True``, use the actual mass of the lens star from the TRILEGAL catalog; if ``False``, sample from a ``lens_mass_solar`` prior.
+- ``sample_tE_directly``: if ``True``, sample the timescale ``tE`` from a prior and derive the physical lens mass; if ``False`` (default), use the lens mass (from prior or catalog) to derive ``tE``.
 
 Priors
 ^^^^^^
@@ -58,15 +60,17 @@ The base required priors are always:
 
 - ``t0`` (MJD)
 - ``u0`` (impact parameter in units of :math:`\theta_E`)
-- ``lens_mass_solar`` (Msun)
 
 Additional requirements depend on the configuration:
 
-- If ``enable_parallax=True`` and ``physical_vectors=False``: require ``traj_angle_rad``
-- If ``custom_blending=True``: require ``blend_g`` (per-band blend flux ratio prior)
-- If ``model_type="USBL"``: require ``q``, ``alpha``, ``origin``, and either:
+- If ``use_trilegal_mass=False`` (default), need to input ``lens_mass_solar`` (Msun)
+- If ``sample_tE_directly=True``, need to input ``tE`` (days)
+- If ``sample_tE_directly=False`` (default) and ``use_trilegal_mass=False``, need to input ``lens_mass_solar`` (Msun)
+- If ``enable_parallax=True`` and ``physical_vectors=False``, need to input ``traj_angle_rad``
+- If ``custom_blending=True``, need to input ``blend_g`` (per-band blend flux ratio prior)
+- If ``model_type="USBL"``, need to input ``q``, ``alpha``, ``origin``, and either:
   - ``semi_major_axis_au`` **or** ``s``
-- If ``model_type in {"NFW","BS"}``: require ``t_m``
+- If ``model_type in {"NFW","BS"}``, need to input ``t_m``
 
 TRILEGAL query and pairing
 --------------------------
@@ -103,8 +107,8 @@ Derived microlensing quantities
 
 .. note::
 
-   The lens mass is currently supplied via a prior (``lens_mass_solar``), rather than inferred
-   from TRILEGAL stellar parameters -- this may change soon as in principle we could compute masses from the surface gravity which is not currently saved during the query.
+   The lens mass can be supplied via a prior (``lens_mass_solar``), inferred directly from the TRILEGAL catalog
+   (``use_trilegal_mass = True``), or can be derived from a timescale prior (``sample_tE_directly = True``).
 
 Blending convention
 -------------------
@@ -122,7 +126,7 @@ The conversion used is:
 
 where :math:`f_\mathrm{blend} = F_\mathrm{blend} / F_\mathrm{source}`.
 
-When ``custom_blending=False``, the table stores TRILEGAL magnitudes directly:
+When ``custom_blending=False``, blending is computed from the source/lens fluxes and the table stores TRILEGAL magnitudes directly:
 
 - ``source_mags``: TRILEGAL source-only magnitudes
 - ``blend_mags``: TRILEGAL lens-only magnitudes
@@ -130,8 +134,8 @@ When ``custom_blending=False``, the table stores TRILEGAL magnitudes directly:
 Examples
 --------
 
-Minimal PSPL example
-^^^^^^^^^^^^^^^^^^^^
+PSPL example with custom lens mass prior
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: python
 
@@ -143,7 +147,7 @@ Minimal PSPL example
        Uniform, LogUniform, PerBandUniform
    )
 
-   # Authenticate
+   # Authenticate with DataLab (should only need to do once...)
    datalab_login()
 
    cfg = GenerationConfig(
@@ -157,12 +161,10 @@ Minimal PSPL example
    priors = default_priors(cfg)
 
    # Manual overrides
-   priors["t0"] = Uniform(61000.0, 62000.0) # Could ensure signal with adaptive t0? (within +- of some point)
+   priors["t0"] = Uniform(61000.0, 62000.0) 
    priors["u0"] = Uniform(0.0, 0.5)
    priors["lens_mass_solar"] = Uniform(0.001, 100.0)
-   priors["q"] = LogUniform(1e-5, 1e-2) # Markus said there is a planet mass ratio function!
-   priors["semi_major_axis_au"] = Uniform(0.5, 10.0) # Markus noted that 0.1-10 is most common
-   priors["blend_g"] = PerBandUniform(0.0, 0.3) # 0-1 is fine -- 0 for NFW/Boson? 
+   priors["blend_g"] = PerBandUniform(0.0, 0.3) 
 
    df = generate_trilegal_event_table(
        n_events=5000,
@@ -174,6 +176,59 @@ Minimal PSPL example
        radius_deg=0.2,
        query_limit=5000,
    )
+
+Sampling tE directly and deriving the lens mass
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+To reproduce specific timescale distributions (e.g., to match survey sensitivity) rather than a mass function, you can sample ``tE`` directly by enabling the ``sample_tE_directly`` argument. The simulation will invert the physics to find the required lens mass.
+
+.. code-block:: python
+
+    cfg = GenerationConfig(
+        model_type="PSPL",
+        sample_tE_directly=True, # Enable direct tE sampling
+        enable_parallax=True,
+        use_trilegal_mass=False # Ignored when sample_tE_directly=True
+    )
+
+    priors = default_priors(cfg)
+
+    # Need to provide 'tE' instead of 'lens_mass_solar'
+    priors["tE"] = LogUniform(1.0, 100.0)
+
+    df = generate_trilegal_event_table(
+        n_events=1000,
+        ra=270.66,
+        dec=-35.70,
+        cfg=cfg,
+        priors=priors
+    )
+
+    # The output df["M_L"] column will now contain the derived masses!
+
+Using TRILEGAL catalog masses (No Mass Prior)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+You can force the simulation to use the physical mass of the selected lens star from the catalog. In this case, you do not provide a ``lens_mass_solar`` prior.
+
+.. code-block:: python
+
+    cfg = GenerationConfig(
+        model_type="PSPL",
+        enable_parallax=True,
+        use_trilegal_mass=True # Enable usage of TRILEGAL 'mass' column
+    )
+
+    # Note: default_priors(cfg) will NOT include 'lens_mass_solar' now
+    priors = default_priors(cfg)
+
+    df = generate_trilegal_event_table(
+        n_events=1000,
+        ra=270.66,
+        dec=-35.70,
+        cfg=cfg,
+        priors=priors
+    )
 
 USBL with physical separation (semi-major axis prior)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -207,7 +262,7 @@ USBL with physical separation (semi-major axis prior)
    priors["semi_major_axis_au"] = Uniform(0.1, 10.0)
 
    df = generate_trilegal_event_table(
-       n_events=20000,
+       n_events=5000,
        ra=270.66,
        dec=-35.70,
        cfg=cfg,

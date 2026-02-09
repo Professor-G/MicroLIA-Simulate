@@ -55,7 +55,7 @@ The module provides a few helper functions to save and plot the simulated event:
    from MicroLIA_Sim.microlensing import write_lightcurves_txt, plot_lightcurves_mag
 
    write_lightcurves_txt(lcs, "example_event.txt", meta={"model": "PSPL"})
-   plot_lightcurves_mag(lcs, title="Perfect pyLIMA PSPL")
+   plot_lightcurves_mag(lcs, title="Perfect PSPL Lightcurve")
 
 
 
