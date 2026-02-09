@@ -260,7 +260,8 @@ def generate_physical_pairs(
 def calculate_trilegal_physics(
     row: dict | pd.Series,
     *,
-    lens_mass_solar: float,
+    lens_mass_solar: Optional[float] = None, # if None need to input tE!
+    tE_days: Optional[float] = None, # vice versa ^^^
     angle_rad: Optional[float], # need to input this if traj_angle column is NaN
     semi_major_axis_au: Optional[float], # this is optional and if input will ensure that s_physical is returned
 ) -> dict | None:
@@ -268,11 +269,8 @@ def calculate_trilegal_physics(
     Compute microlensing geometry and derived parameters for a TRILEGAL source–lens pair.
 
     Given a pre-constructed source–lens pairing (from the generate_physical_pairs function),
-    this function computes the Einstein angle, Einstein timescale, finite-source parameter, 
-    and the microlensing parallax components (optional).
-
-    Note that in our current implementation, the lens mass is provided externally (i.e., as a prior), 
-    rather than inferred from the TRILEGAL catalog (this could in principle be derived from the surface gravity and radius). 
+    this function computes the Einstein angle, Einstein timescale (unless tE days is input as a prior), 
+    finite-source parameter, and the microlensing parallax components (optional).
 
     The trajectory angle used to decompose the parallax vector is taken from ``row["traj_angle"]`` when available (i.e., when using physical
     proper-motion vectors), otherwise it must be supplied via the ``angle_rad`` argument.
@@ -291,8 +289,10 @@ def calculate_trilegal_physics(
         ``distance_source``, ``distance_blend``, ``mu_rel``, ``logl_source``,
         ``logte_source``, and optionally ``traj_angle``.
         Distances are interpreted as pc and ``mu_rel`` as mas/yr.
-    lens_mass_solar : float
-        Lens mass in solar masses.
+    lens_mass_solar : float or None
+        Lens mass in solar masses (only used if tE_days is None).
+    tE_days : float or None
+        Event timescale, if input will use this prior instead of the actual lens mass for the calculations.
     angle_rad : float or None
         Trajectory angle in radians used to decompose the parallax magnitude into
         (piEN, piEE). Required if ``row["traj_angle"]`` is missing or NaN; ignored
@@ -334,19 +334,37 @@ def calculate_trilegal_physics(
     """
     G, c, au = const.G, const.c, const.au
 
-    M_L = float(lens_mass_solar) * u.M_sun
     D_S = float(row["distance_source"]) * u.pc
     D_L = float(row["distance_blend"]) * u.pc
     mu_rel = float(row["mu_rel"]) * (u.mas / u.yr)
 
-    term = (4 * G * M_L / c**2).to(u.au)
     dist_term = (1 / D_L - 1 / D_S).to(1 / u.au)
     if dist_term.value <= 0:
         return None
 
-    theta_E_rad = np.sqrt(term * dist_term).decompose().value * u.rad
-    theta_E_mas = theta_E_rad.to(u.mas)
-    tE = (theta_E_mas / mu_rel).to(u.day).value
+    if tE_days is not None:
+        # If tE is prior, compute the mass
+        tE_val = float(tE_days)
+        
+        # Need to compute theta_E from tE and mu_rel
+        theta_E_mas = (tE_val * u.day) * mu_rel
+        theta_E_rad = theta_E_mas.to(u.rad)
+
+        # Now can compute the lens mass
+        term = (theta_E_rad.value**2 / dist_term).to(u.au)
+        M_L = (term * c**2 / (4 * G)).to(u.M_sun)
+        
+    else:
+        # This is when tE is not a prior, we use the lens mass to derive it
+        if lens_mass_solar is None:
+            # validate_priors should catch this but just in case...
+            return None 
+
+        M_L = float(lens_mass_solar) * u.M_sun
+        term = (4 * G * M_L / c**2).to(u.au)
+        theta_E_rad = np.sqrt(term * dist_term).decompose().value * u.rad
+        theta_E_mas = theta_E_rad.to(u.mas)
+        tE_val = (theta_E_mas / mu_rel).to(u.day).value
 
     L_S = (10 ** float(row["logl_source"])) * const.L_sun
     T_S = (10 ** float(row["logte_source"])) * u.K
@@ -387,7 +405,7 @@ def calculate_trilegal_physics(
         s_val = float(s_rad / theta_E_rad.value)
 
     return {
-        "tE": float(tE),
+        "tE": float(tE_val),
         "rho": float(rho),
         "piEN": float(piEN),
         "piEE": float(piEE),
@@ -399,6 +417,9 @@ def calculate_trilegal_physics(
         "theta_E_mas": float(theta_E_mas.value),
         "pi_rel_mas": float(pi_rel_mas),
     }
+
+
+
 
 
 def draw_blend_g(rng: np.random.Generator, bands: str = "ugrizy") -> Dict[str, float]:
@@ -775,6 +796,9 @@ class GenerationConfig:
     # Adding this to enable option to use the actual TRILEGAL lens masses! 
     use_trilegal_mass: bool = False
 
+    # Adding this additional option so we can sample tE directly (will thus make lens mass a computed param)
+    sample_tE_directly: bool = False
+
 def required_prior_names(cfg: GenerationConfig) -> List[str]:
     """
     Return the list of prior names required for a given generation configuration.
@@ -793,6 +817,10 @@ def required_prior_names(cfg: GenerationConfig) -> List[str]:
 
     If ``cfg.model_type`` is ``"NFW"`` or ``"BS"``, then ``"t_m"`` is required.
 
+    If ``cfg.use_trilegal_mass`` is True, the lens mass will come from the TRILEGAL catalog. Set to False to use prior.
+
+    If ``cfg.sample_tE_directly`` is False, the timescale will come from the lens mass, otherwise will use input tE prior.
+
     Parameters
     ----------
     cfg : GenerationConfig
@@ -802,13 +830,16 @@ def required_prior_names(cfg: GenerationConfig) -> List[str]:
     Returns
     -------
     list of str
-        Names of required priors. The base set always includes t0, u0 and the lens mass ("lens_mass_solar"").
-        Additional requirements depend on ``cfg``.
+        Names of required priors. The base set always includes t0, u0 and either the lens mass ("lens_mass_solar") 
+        or the timescale ("tE"), depending on whether tE is input as a prior. Additional requirements depend on ``cfg``.
     """
     req = ["t0", "u0"]
 
     # Only require lens_mass_solar if not using the TRILEGAL catalog mass
-    if not cfg.use_trilegal_mass:
+    # Also, if tE is input as a prior, then the mass will not be used to compute a physical tE
+    if cfg.sample_tE_directly:
+        req.append("tE")
+    elif not cfg.use_trilegal_mass:
         req.append("lens_mass_solar")
 
     # angle which is only when enable_parallax=True and physical_vectors=False (since traj_angle is NaN)
@@ -856,9 +887,7 @@ def default_priors(cfg: GenerationConfig) -> Dict[str, Prior]:
             Event time of closest approach (MJD).
         - ``u0`` : Uniform(0.0, 0.3)
             Impact parameter in units of theta_E.
-        - ``lens_mass_solar`` : Uniform(0.1, 1.0)
-            Lens mass in solar masses.
-
+        
         Conditional priors
         - ``traj_angle_rad`` : Uniform(0.0, 2pi)
             Included only if ``cfg.enable_parallax`` is True and
@@ -866,6 +895,12 @@ def default_priors(cfg: GenerationConfig) -> Dict[str, Prior]:
             not available from TRILEGAL and must be provided as a prior).
         - ``blend_g`` : PerBandUniform(0.0, 1.0, bands="ugrizy")
             Included only if ``cfg.custom_blending`` is True.
+        - ``lens_mass_solar`` : Uniform(0.1, 1.0)
+            Lens mass in solar masses.
+         - ``tE`` : LogUniform(5.0, 100.0)
+            Even timescale, if input as prior the lens mass will not be used to compute the physical params.
+            Note that since the TRILEGAL stars are selected at random, using extreme tE priors might occasionally 
+            yield derived masses that are unphysical (e.g., very long timescale with a very fast moving star).
 
         USBL priors (only if ``cfg.model_type == "USBL"``)
         - ``q`` : LogUniform(1e-4, 1.0)
@@ -892,8 +927,10 @@ def default_priors(cfg: GenerationConfig) -> Dict[str, Prior]:
         "u0": Uniform(0.0, 0.3),
     }
 
-    # Only add default mass prior if we aren't using TRILEGAL's mass
-    if not cfg.use_trilegal_mass:
+    # Only add default mass prior if we aren't using TRILEGAL's mass and tE is not a prior
+    if cfg.sample_tE_directly:
+        pri["tE"] = LogUniform(5.0, 100.0)
+    elif not cfg.use_trilegal_mass:
         pri["lens_mass_solar"] = Uniform(0.1, 1.0)
 
     if cfg.enable_parallax and (not cfg.physical_vectors):
@@ -1014,7 +1051,7 @@ def describe_requirements(cfg: GenerationConfig, priors: Optional[Dict[str, Prio
     return "\n".join(lines)
 
 
-# Now can can construct the TRILEGAL table
+# Now can can construct the params table
 def generate_trilegal_event_table(
     *,
     n_events: int,
@@ -1167,20 +1204,26 @@ def generate_trilegal_event_table(
         t0 = float(priors["t0"].sample(rng))
         u0 = float(priors["u0"].sample(rng))
 
-        if cfg.use_trilegal_mass:
-            # Use the actual cataloged mass
-            lens_mass = float(p["mass_blend"])
+        lens_mass = None 
+        tE_sampled = None 
 
-            # I don't think TRILEGAL would return NaN masses but just in case...
-            if (not np.isfinite(lens_mass)) or (lens_mass <= 0.0):
-                if "lens_mass_solar" in priors:
-                    lens_mass = float(priors["lens_mass_solar"].sample(rng))
-                else:
-                    continue # Just skip the event
-
+        if cfg.sample_tE_directly:
+            tE_sampled = float(priors["tE"].sample(rng))
         else:
-            # Use the prior
-            lens_mass = float(priors["lens_mass_solar"].sample(rng))
+            if cfg.use_trilegal_mass:
+                # Use the actual cataloged mass
+                lens_mass = float(p["mass_blend"])
+
+                # I don't think TRILEGAL would return NaN masses but just in case...
+                if (not np.isfinite(lens_mass)) or (lens_mass <= 0.0):
+                    if "lens_mass_solar" in priors:
+                        lens_mass = float(priors["lens_mass_solar"].sample(rng))
+                    else:
+                        continue # Just skip the event
+
+            else:
+                # Use the prior
+                lens_mass = float(priors["lens_mass_solar"].sample(rng))
 
 
         # Only sample trajectory angle if parallax is enabled and there are no physical vectors
@@ -1195,12 +1238,20 @@ def generate_trilegal_event_table(
 
         phys = calculate_trilegal_physics(
             p,
-            lens_mass_solar=lens_mass,
+            lens_mass_solar=lens_mass, # None if tE is a prior!
+            tE_days=tE_sampled, # vice versa ^^^
             angle_rad=angle,
             semi_major_axis_au=a_au,
         )
         if phys is None:
             continue
+
+        # If sampling tE directly, check to ensure that at least it yields a positive lens mass
+        if cfg.sample_tE_directly:
+            derived_mass = phys["M_L"]
+            if derived_mass <= 0.0: # > 100 too? too unphysical? will check with Rache
+                print('Derived mass is less than or equal to zero! Skipping...')
+                continue
 
         # parallax switch (storing NaN if not enabled!)
         piEN = phys["piEN"] if cfg.enable_parallax else np.nan
