@@ -194,7 +194,7 @@ First we import the necessary modules to generate the event parameters and to do
     pg.login_datalab()
 
 
-Black hole (PSPL)
+PSPL
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: python
