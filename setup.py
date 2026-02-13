@@ -8,7 +8,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="MicroLIA-Simulate",
-    version="0.1.2",
+    version="0.1.3",
     description="A standalone simulation engine for the MicroLIA framework, designed as a lightweight sister package for generating synthetic astronomical datasets.",
     author="Daniel Godines",
     author_email="dan@gmail.com",
