@@ -135,6 +135,7 @@ def generate_physical_pairs(
     offset_pc: float = 0.1,
     random_seed: int | None = None,
     physical_vectors: bool = False,
+    max_tries: int = 500000,
 ) -> pd.DataFrame:
     """
     Construct source–lens (foreground) pairs from a TRILEGAL catalog.
@@ -152,8 +153,10 @@ def generate_physical_pairs(
     df : pandas.DataFrame
         Input TRILEGAL table. Must contain (at minimum) the columns:
         ``distance_pc``, ``ra``, ``dec``, ``logl``, ``logte``,
-        ``pmracosd``, ``pmdec``, ``mu_total``, and band magnitudes
+        ``mu_total``, ``mass``, and band magnitudes
         ``umag, gmag, rmag, imag, zmag, ymag``.
+        If ``physical_vectors=True``, the catalog must also contain
+        ``pmracosd`` and ``pmdec``.
     n_events : int
         Number of source–lens pairs to generate (best effort; may return fewer).
     min_dist_pc : float, optional
@@ -169,6 +172,8 @@ def generate_physical_pairs(
         trajectory angle. If False, only the magnitudes of the proper motions
         are used (``mu_total``) and a random relative angle is drawn; in this
         case ``traj_angle`` is set to NaN. Default is False.
+    max_tries : int, optional
+        Maximum number of attempted draws used to reach ``n_events``. Default is 500000.
 
     Returns
     -------
@@ -196,48 +201,55 @@ def generate_physical_pairs(
 
     Notes
     -----
-    - The input catalog is sorted by ``distance_pc``. Sources are drawn from the
-      most distant 90% of objects (indices from 10% to end) to bias toward
-      background sources and increase the chance of finding a foreground lens.
     - If ``physical_vectors=False``, ``mu_rel`` is computed from the scalar proper
-      motion magnitudes using a random relative angle:
-      ``mu_rel = sqrt(mu_S^2 + mu_L^2 - 2 mu_S mu_L cos(theta))``.
-      The direction is intentionally deferred to a later prior.
-    - A single foreground lens is drawn *with replacement* for each source; the
-      same lens may appear in multiple pairs.
-
-    Raises
-    ------
-    KeyError
-        If required columns are missing from ``df``.
+      motion magnitudes using a random relative angle. The direction is intentionally deferred to a later prior.
+    - A single foreground lens is drawn *with replacement* for each source; the same lens may appear in multiple pairs.
     """
-
     rng = np.random.default_rng(random_seed)
-    df_sorted = df.sort_values(by="distance_pc").reset_index(drop=True)
 
-    pairs: List[Dict[str, Any]] = []
-    candidate_indices = np.arange(int(len(df_sorted) * 0.1), len(df_sorted))
-    rng.shuffle(candidate_indices)
+    # Sort by distance for faster range selection
+    df_sorted = df.sort_values("distance_pc").reset_index(drop=True)
+    if len(df_sorted) == 0:
+        raise ValueError("Empty TRILEGAL catalog, cannot generate pairs!")
 
-    for i in candidate_indices:
-        if len(pairs) >= n_events:
-            break
+    dist = df_sorted["distance_pc"].to_numpy()
+    N = len(df_sorted)
 
-        source = df_sorted.iloc[i]
-        d_source = float(source["distance_pc"])
+    # Lens stars must be > min_dist_pc
+    min_lens_idx = int(np.searchsorted(dist, min_dist_pc, side="right"))
+
+    # Source must be far enough that a lens can exist (i.e., D_S > min_dist_pc + offset_pc)
+    min_source_idx = int(np.searchsorted(dist, min_dist_pc + offset_pc, side="right"))
+
+    if min_source_idx >= N or min_lens_idx >= N:
+        print(f"[WARNING]: Catalog has no valid source/lens distance ordering (min_dist_pc={min_dist_pc}, offset_pc={offset_pc}). Returning empty dataframe...")
+        return pd.DataFrame()
+
+    pairs: list[dict] = []
+    tries = 0
+
+    while len(pairs) < n_events and tries < max_tries:
+        tries += 1
+
+        # Will pick a source star with replacement
+        si = int(rng.integers(min_source_idx, N))
+        d_source = float(dist[si])
 
         max_lens_dist = d_source - float(offset_pc)
         if max_lens_dist <= min_dist_pc:
             continue
 
-        foreground = df_sorted[
-            (df_sorted["distance_pc"] > min_dist_pc) & (df_sorted["distance_pc"] < max_lens_dist)
-        ]
-        if foreground.empty:
+        # The lens stars are all indices in [min_lens_idx, max_lens_idx)
+        max_lens_idx = int(np.searchsorted(dist, max_lens_dist, side="left"))
+        if max_lens_idx <= min_lens_idx:
             continue
 
-        lens = foreground.sample(n=1, random_state=int(rng.integers(1e9))).iloc[0]
+        li = int(rng.integers(min_lens_idx, max_lens_idx))
 
+        source = df_sorted.iloc[si]
+        lens = df_sorted.iloc[li]
+
+        # proper motion calculation
         if physical_vectors:
             dmu_ra = float(source["pmracosd"] - lens["pmracosd"])
             dmu_dec = float(source["pmdec"] - lens["pmdec"])
@@ -246,14 +258,14 @@ def generate_physical_pairs(
         else:
             mu_S = float(source["mu_total"])
             mu_L = float(lens["mu_total"])
-            theta = float(rng.uniform(0, 2 * np.pi))
-            mu_rel = float(np.sqrt(mu_S**2 + mu_L**2 - 2 * mu_S * mu_L * np.cos(theta)))
+            theta = float(rng.uniform(0.0, 2.0 * np.pi))
+            mu_rel = float(np.sqrt(mu_S**2 + mu_L**2 - 2.0 * mu_S * mu_L * np.cos(theta)))
             traj_angle = np.nan
 
-        row: Dict[str, Any] = {
+        row = {
             "mu_rel": mu_rel, # mas/yr
-            "traj_angle": traj_angle, # rad (may be nan)
-            "distance_source": d_source, # pc
+            "traj_angle": traj_angle, # rad
+            "distance_source": float(source["distance_pc"]), # pc
             "distance_blend": float(lens["distance_pc"]), # pc
             "mass_blend": float(lens["mass"]), # in Msun
             "logl_source": float(source["logl"]),
@@ -264,9 +276,12 @@ def generate_physical_pairs(
 
         for b in "ugrizy":
             row[f"{b}_source"] = float(source[f"{b}mag"])
-            row[f"{b}_blend"] = float(lens[f"{b}mag"])
+            row[f"{b}_blend"]  = float(lens[f"{b}mag"])
 
         pairs.append(row)
+
+    if len(pairs) < n_events:
+        print(f"[WARNING]: Could only generate {len(pairs)}/{n_events} pairs after {tries} tries. Try increasing radius/query_limit, loosen min_dist_pc/offset_pc, or increase max_tries.")
 
     return pd.DataFrame(pairs)
 
