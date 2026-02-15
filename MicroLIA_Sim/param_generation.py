@@ -56,6 +56,7 @@ def query_trilegal_stars(
     ds_max_pc: float = 10000.0,
     limit: int = 5000,
     timeout: int = 600,
+    random_selection : bool = False
 ) -> pd.DataFrame:
     """
     Query a TRILEGAL star sample from Astro Data Lab (their `lsst_sim.simdr2` table) near an input sky position.
@@ -79,6 +80,10 @@ def query_trilegal_stars(
         Maximum number of rows to return. Default is 5000.
     timeout : int, optional
         Query timeout in seconds. Default is 600.
+    random_selection : bool, optional
+        If True, the database results will be shuffled before limiting them. 
+        This is helpful if querying the same part of the sky (e.g., Bulge) multiple times with a small limit.
+        Note that if True, the database must find all stars withing ``radius_deg`` first, so best to use a small radius in this case.
 
     Returns
     -------
@@ -91,14 +96,23 @@ def query_trilegal_stars(
     """
     mu0_max = 5 * np.log10(float(ds_max_pc)) - 5
 
-    query = f"""
-        SELECT ra, dec, mu0, pmracosd, pmdec, umag, gmag, rmag, imag, zmag, ymag, logl, logte, mass
-        FROM lsst_sim.simdr2
-        WHERE q3c_radial_query(ra, dec, {ra}, {dec}, {radius_deg})
-          AND mu0 < ({mu0_max})
-        LIMIT {int(limit)}
-    """
-
+    if random_selection is False:
+        query = f"""
+            SELECT ra, dec, mu0, pmracosd, pmdec, umag, gmag, rmag, imag, zmag, ymag, logl, logte, mass
+            FROM lsst_sim.simdr2
+            WHERE q3c_radial_query(ra, dec, {ra}, {dec}, {radius_deg})
+              AND mu0 < ({mu0_max})
+            LIMIT {int(limit)}
+        """
+    else:
+        query = f"""
+            SELECT ra, dec, mu0, pmracosd, pmdec, umag, gmag, rmag, imag, zmag, ymag, logl, logte, mass
+            FROM lsst_sim.simdr2
+            WHERE q3c_radial_query(ra, dec, {ra}, {dec}, {radius_deg})
+              AND mu0 < ({mu0_max})
+            ORDER BY random()
+            LIMIT {int(limit)}
+        """
     res = qc.query(sql=query, format="csv", timeout=timeout)
 
     try:
@@ -346,8 +360,8 @@ def calculate_trilegal_physics(
         # If tE is prior, compute the mass
         tE_val = float(tE_days)
         
-        # Need to compute theta_E from tE and mu_rel
-        theta_E_mas = (tE_val * u.day) * mu_rel
+        # Need to compute theta_E from tE and mu_rel (and convert to pure mas now otherwise units are off by 1 yr!)
+        theta_E_mas = ((tE_val * u.day) * mu_rel).to(u.mas)
         theta_E_rad = theta_E_mas.to(u.rad)
 
         # Now can compute the lens mass
@@ -417,9 +431,6 @@ def calculate_trilegal_physics(
         "theta_E_mas": float(theta_E_mas.value),
         "pi_rel_mas": float(pi_rel_mas),
     }
-
-
-
 
 
 def draw_blend_g(rng: np.random.Generator, bands: str = "ugrizy") -> Dict[str, float]:
@@ -783,6 +794,10 @@ class GenerationConfig:
         physically motivated separation ``s_physical`` and use it as ``s`` when
         available; otherwise fall back to sampling ``s`` from a prior. If False,
         always sample ``s`` from its prior. Default is True.
+    use_trilegal_mass : bool, optional
+        Whether to use the actual lens mass from TRILEGAL. If False, user must provide it as a prior (unless ``sample_tE_directly``=True).
+    sample_tE_directly : bool, optional
+        Whether the tE is input as a prior, if True the code will use this prior to compute the lens mass
     """
 
     model_type: ModelType = "PSPL"
@@ -991,8 +1006,16 @@ def validate_priors(cfg: GenerationConfig, priors: Dict[str, Prior]) -> None:
     # helpful warning for unused priors
     used = set(["t0", "u0"])
 
-    if (not cfg.use_trilegal_mass) or ("lens_mass_solar" in priors):
-        used.add("lens_mass_solar")
+    # check to see if tE is used directly
+    if cfg.sample_tE_directly:
+        used.add("tE")
+    
+    # check to see if lens mass is used
+    if (not cfg.use_trilegal_mass) and (not cfg.sample_tE_directly):
+         used.add("lens_mass_solar")
+    elif "lens_mass_solar" in priors:
+         # If user provided mass but isn't required, still mark it used to silence the warning
+         used.add("lens_mass_solar")
 
     if cfg.enable_parallax and (not cfg.physical_vectors):
         used.add("traj_angle_rad")
@@ -1051,6 +1074,29 @@ def describe_requirements(cfg: GenerationConfig, priors: Optional[Dict[str, Prio
     return "\n".join(lines)
 
 
+def is_in_footprint(ra: float, dec: float, timeout: int = 5) -> bool:
+    """
+    Quickly probe if a coordinate is within the LSST TRILEGAL footprint, using short timeout to avoid hanging on empty regions.
+    """
+    probe_radius = 0.05 # Use a small radius just to quickly check if we hit a star
+    
+    query = f"""
+        SELECT 1 
+        FROM lsst_sim.simdr2 
+        WHERE q3c_radial_query(ra, dec, {ra}, {dec}, {probe_radius})
+        LIMIT 1
+    """
+    
+    try:
+        # If it hangs more than timeout seconds than we assume it is not in the footprintg
+        res = qc.query(sql=query, format="csv", timeout=timeout)
+        if len(res.strip()) > 0 and "1" in res: # Ensure not empty
+             return True
+    except Exception:
+        return False
+        
+    return False
+
 # Now can can construct the params table
 def generate_trilegal_event_table(
     *,
@@ -1066,6 +1112,7 @@ def generate_trilegal_event_table(
     timeout: int = 600,
     min_dist_pc: float = 10.0,
     offset_pc: float = 0.1,
+    random_selection: bool = False
 ) -> pd.DataFrame:
     """
     Generate a microlensing event-parameter table using TRILEGAL stars + user priors.
@@ -1111,6 +1158,11 @@ def generate_trilegal_event_table(
     offset_pc : float, optional
         Minimum source–lens distance separation (pc), enforced as ``D_L < D_S - offset_pc``
         during pairing. Default is 0.1.
+
+    random_selection : bool, optional
+        If True, the database results will be shuffled before limiting them. 
+        This is helpful if querying the same part of the sky (e.g., Bulge) multiple times with a small limit.
+        Note that if True, the database must find all stars withing ``radius_deg`` first, so best to use a small radius in this case.
 
     Returns
     -------
@@ -1177,6 +1229,11 @@ def generate_trilegal_event_table(
     validate_priors(cfg, priors)
     print(describe_requirements(cfg, priors))
 
+    #print(f"Checking footprint coverage for ({ra}, {dec})...")
+    if not is_in_footprint(ra, dec):
+        print("Input ra/dec appears to be outside the simulation footprint (or timed out). Skipping...")
+        return pd.DataFrame()
+
     print('Querying...')
     stars = query_trilegal_stars(
         ra, dec,
@@ -1184,6 +1241,7 @@ def generate_trilegal_event_table(
         ds_max_pc=ds_max_pc,
         limit=query_limit,
         timeout=timeout,
+        random_selection=random_selection
     )
 
     pairs = generate_physical_pairs(
