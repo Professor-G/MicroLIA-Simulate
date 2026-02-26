@@ -159,6 +159,7 @@ def simulate_rrlyrae_multiband_from_txt(
     reference_band: str = "r",
     reference_mean_mag: Optional[float] = None,
     T0: Optional[float] = None,
+    amplitude_jitter: float = 0.15,
     rng: Optional[np.random.Generator] = None,
 ) -> Dict[str, np.ndarray]:
     """
@@ -180,8 +181,11 @@ def simulate_rrlyrae_multiband_from_txt(
     T0 : float, optional
         Epoch corresponding to phase = 0 (in same units as `times_by_band`).
         If None, a random T0 is drawn uniformly in [0, period).
+    amplitude_jitter : float, optional
+        Fractional scale to randomly stretch/compress the amplitude. 
+        Defaults to 0.15 (+/- 15%). Set to 0.0 for no jitter.
     rng : numpy.random.Generator, optional
-        RNG used when drawing random T0. Ignored if T0 is provided.
+        RNG used when drawing random T0 and jitter. Ignored if T0 is provided.
 
     Returns
     -------
@@ -206,6 +210,12 @@ def simulate_rrlyrae_multiband_from_txt(
     # Draw T0 if not provided
     if T0 is None:
         T0 = rng.uniform(0.0, period)
+        
+    # Draw Amplitude Scaling Factor (e.g., between 0.85 and 1.15)
+    if amplitude_jitter > 0.0:
+        amp_scale = rng.uniform(1.0 - amplitude_jitter, 1.0 + amplitude_jitter)
+    else:
+        amp_scale = 1.0
 
     # Compute offset to enforce desired mean mag in reference band
     ref_mag_template = mag_templ[reference_band]
@@ -232,11 +242,17 @@ def simulate_rrlyrae_multiband_from_txt(
         band_mag_templ = mag_templ[band]
 
         mag_interp = _interp_periodic(band_phase_templ, band_mag_templ, phase)
+        
+        # Apply amplitude jitter around the template's mean magnitude for this band
+        if amp_scale != 1.0:
+            band_mean_mag = calc_intensity_mean_mag(band_mag_templ)
+            mag_interp = band_mean_mag + amp_scale * (mag_interp - band_mean_mag)
+
         mags_out[band] = mag_interp + delta_mag
 
     return mags_out
 
-def simulate_rrlyae(times, bailey, period, reference_band, reference_mean_mag, rng):
+def simulate_rrlyae(times, bailey, period, reference_band, reference_mean_mag, amplitude_jitter=0.15, rng=None):
     """
     Generate multiband RR Lyrae (or Cepheid-like) light curves by sampling a
     template and phase-folding it onto the provided cadence. RRLyrae templates are
@@ -248,7 +264,7 @@ def simulate_rrlyae(times, bailey, period, reference_band, reference_mean_mag, r
         * 1 -> RRab : Normal(0.6, 0.15) days
         * 2 -> RRc : Normal(0.33, 0.10) days
         * 3 -> Cepheid-like : 10**LogNormal(0.0, 0.2) days
-   
+    
     Parameters
     ----------
     times : Mapping[str, array_like]
@@ -265,6 +281,9 @@ def simulate_rrlyae(times, bailey, period, reference_band, reference_mean_mag, r
     reference_mean_mag : float
         Desired mean magnitude in `reference_band` (passed through to the
         underlying simulator).
+    amplitude_jitter : float, optional
+        Fractional scale to randomly stretch/compress the amplitude. 
+        Defaults to 0.15 (+/- 15%). Set to 0.0 for no jitter.
     rng : numpy.random.Generator, optional
         RNG used when drawing random T0. Ignored if T0 is provided.
 
@@ -275,16 +294,19 @@ def simulate_rrlyae(times, bailey, period, reference_band, reference_mean_mag, r
         Dictionary mapping each input band name to an array of simulated
         magnitudes evaluated at `times[band]`.
     """
+    
+    if rng is None:
+        rng = np.random.default_rng()
 
     if period is None:
         if bailey == 1: #RRab
-            period = np.random.normal(0.6, 0.15)
+            period = rng.normal(0.6, 0.15)
             _TYPE_ = "RRab"
         elif bailey == 2:
-            period = np.random.normal(0.33, 0.1)
+            period = rng.normal(0.33, 0.1)
             _TYPE_ = "RRc"
         elif bailey == 3: #Cepheids
-            period = np.random.lognormal(0., 0.2)
+            period = rng.lognormal(0., 0.2)
             period = 10**period
             _TYPE_ = "RRc"
 
@@ -297,9 +319,9 @@ def simulate_rrlyae(times, bailey, period, reference_band, reference_mean_mag, r
         template_path=tpl_path,
         reference_band=reference_band,
         reference_mean_mag=reference_mean_mag,
+        amplitude_jitter=amplitude_jitter,
         rng=rng
     )
 
-    return mags 
-
+    return mags
 
