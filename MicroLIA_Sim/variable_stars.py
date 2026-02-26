@@ -8,8 +8,29 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Sequence
-
 from importlib import resources
+
+
+def calc_intensity_mean_mag(mags: np.ndarray) -> float:
+    """
+    Calculate the intensity-averaged mean magnitude. Input mags must be finite (no NaNs or infs).
+
+    Parameters
+    ----------
+    mags : numpy.ndarray
+        1D array of magnitudes. 
+
+    Returns
+    -------
+    float
+        Intensity-mean magnitude.
+    """
+
+    # FLUX IS LINEAR SO BETTER TO USE FOR AVG CALCULATION!   
+    fluxes = 10 ** (-0.4 * np.asarray(mags))
+    mean_flux = np.mean(fluxes)
+    
+    return -2.5 * np.log10(mean_flux)
 
 def load_rr_template_txt(path: str | Path) -> Dict[str, Dict[str, np.ndarray]]:
     """
@@ -189,7 +210,7 @@ def simulate_rrlyrae_multiband_from_txt(
     # Compute offset to enforce desired mean mag in reference band
     ref_mag_template = mag_templ[reference_band]
     if reference_mean_mag is not None:
-        delta_mag = reference_mean_mag - np.mean(ref_mag_template)
+        delta_mag = reference_mean_mag - calc_intensity_mean_mag(ref_mag_template)
     else:
         delta_mag = 0.0
 
@@ -214,7 +235,6 @@ def simulate_rrlyrae_multiband_from_txt(
         mags_out[band] = mag_interp + delta_mag
 
     return mags_out
-
 
 def simulate_rrlyae(times, bailey, period, reference_band, reference_mean_mag, rng):
     """
