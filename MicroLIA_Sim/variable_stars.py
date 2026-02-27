@@ -310,6 +310,8 @@ def simulate_rrlyae(times, bailey, period, reference_band, reference_mean_mag, a
             period = 10**period
             _TYPE_ = "RRc"
 
+        period = abs(period) #on rare occassions period is negative which breaks the code
+
     root = str(resources.files(__package__) / 'data') # Always use the templates which I've put in the data dir!
     tpl_path = pick_random_template_path(root, rr_type=_TYPE_, rng=rng)
 
