@@ -136,6 +136,7 @@ def generate_physical_pairs(
     random_seed: int | None = None,
     physical_vectors: bool = False,
     max_tries: int = 500000,
+    dark_matter_lens: bool = False,
 ) -> pd.DataFrame:
     """
     Construct source–lens (foreground) pairs from a TRILEGAL catalog.
@@ -174,6 +175,9 @@ def generate_physical_pairs(
         case ``traj_angle`` is set to NaN. Default is False.
     max_tries : int, optional
         Maximum number of attempted draws used to reach ``n_events``. Default is 500000.
+    dark_matter_lens : bool, optional
+        Whether the event is a extended dark object, in which case the lens distance and relative 
+        proper motion between the lens and the source must be input as priors.
 
     Returns
     -------
@@ -214,6 +218,39 @@ def generate_physical_pairs(
 
     dist = df_sorted["distance_pc"].to_numpy()
     N = len(df_sorted)
+
+    # Dark Matter Mode (Need source only)
+    if dark_matter_lens:
+        min_source_idx = int(np.searchsorted(dist, min_dist_pc + offset_pc, side="right"))
+        if min_source_idx >= N:
+            print(f"[WARNING]: Catalog has no valid source distances (min_dist_pc={min_dist_pc}, offset_pc={offset_pc}). Returning empty dataframe...")
+            return pd.DataFrame()
+            
+        # Draw random sources with replacement
+        source_indices = rng.integers(min_source_idx, N, size=n_events)
+        sources = df_sorted.iloc[source_indices]
+
+        pairs_list = []
+        for _, source in sources.iterrows():
+            row = {
+                "mu_rel": np.nan,
+                "traj_angle": np.nan,
+                "distance_source": float(source["distance_pc"]),
+                "distance_blend": np.nan,
+                "mass_blend": np.nan,
+                "logl_source": float(source["logl"]),
+                "logte_source": float(source["logte"]),
+                "ra": float(source["ra"]),
+                "dec": float(source["dec"]),
+            }
+            for b in "ugrizy":
+                row[f"{b}_source"] = float(source[f"{b}mag"])
+                row[f"{b}_blend"]  = 99.0 # Represents zero flux for dark matter
+            pairs_list.append(row)
+            
+        return pd.DataFrame(pairs_list)
+
+    # Standard stellar pairing #
 
     # Lens stars must be > min_dist_pc
     min_lens_idx = int(np.searchsorted(dist, min_dist_pc, side="right"))
@@ -813,6 +850,9 @@ class GenerationConfig:
         Whether to use the actual lens mass from TRILEGAL. If False, user must provide it as a prior (unless ``sample_tE_directly``=True).
     sample_tE_directly : bool, optional
         Whether the tE is input as a prior, if True the code will use this prior to compute the lens mass
+    dark_matter_lens : bool, optional
+        Whether the event is a extended dark object, in which case the lens distance and relative 
+        proper motion between the lens and the source must be input as priors.
     """
 
     model_type: ModelType = "PSPL"
@@ -828,6 +868,9 @@ class GenerationConfig:
 
     # Adding this additional option so we can sample tE directly (will thus make lens mass a computed param)
     sample_tE_directly: bool = False
+
+    # Flag for theoretical dark lenses (in which case Ds and mu_rel must be priors)
+    dark_matter_lens: bool = False 
 
 def required_prior_names(cfg: GenerationConfig) -> List[str]:
     """
@@ -871,6 +914,10 @@ def required_prior_names(cfg: GenerationConfig) -> List[str]:
         req.append("tE")
     elif not cfg.use_trilegal_mass:
         req.append("lens_mass_solar")
+
+    # Dark matter specific priors
+    if cfg.dark_matter_lens:
+        req.extend(["D_L", "mu_rel"])
 
     # angle which is only when enable_parallax=True and physical_vectors=False (since traj_angle is NaN)
     if cfg.enable_parallax and (not cfg.physical_vectors):
@@ -957,6 +1004,13 @@ def default_priors(cfg: GenerationConfig) -> Dict[str, Prior]:
         "u0": Uniform(0.0, 0.3),
     }
 
+    if cfg.dark_matter_lens:
+        pri["D_L"] = Uniform(100.0, 8000.0) # pc
+        pri["mu_rel"] = Uniform(1.0, 20.0) # mas/yr
+        # Ensure we have a mass prior if no tE is input
+        if not cfg.sample_tE_directly:
+            pri["lens_mass_solar"] = LogUniform(1e-6, 100.0)
+
     # Only add default mass prior if we aren't using TRILEGAL's mass and tE is not a prior
     if cfg.sample_tE_directly:
         pri["tE"] = LogUniform(5.0, 100.0)
@@ -1032,6 +1086,10 @@ def validate_priors(cfg: GenerationConfig, priors: Dict[str, Prior]) -> None:
          # If user provided mass but isn't required, still mark it used to silence the warning
          used.add("lens_mass_solar")
 
+    # Inside validate_priors function:
+    if cfg.dark_matter_lens:
+        used.update(["D_L", "mu_rel"])
+        
     if cfg.enable_parallax and (not cfg.physical_vectors):
         used.add("traj_angle_rad")
     if cfg.custom_blending:
@@ -1259,19 +1317,34 @@ def generate_trilegal_event_table(
         random_selection=random_selection
     )
 
+    # Ask for extra pairs if in dark matter mode, since rejection sampling on D_L will filter some out
+    buffer_multiplier = 5 if cfg.dark_matter_lens else 1
+
     pairs = generate_physical_pairs(
         stars,
-        n_events,
+        n_events * buffer_multiplier,
         min_dist_pc=min_dist_pc,
         offset_pc=offset_pc,
         random_seed=random_seed,
         physical_vectors=cfg.physical_vectors,
+        dark_matter_lens=cfg.dark_matter_lens
     )
 
     rows: List[Dict[str, Any]] = []
 
     for i in range(len(pairs)):
         p = pairs.iloc[i]
+        #p = pairs.iloc[i].to_dict()
+
+        # Dark Matter injection
+        if cfg.dark_matter_lens:
+            D_L_sampled = float(priors["D_L"].sample(rng))
+            # Rejection sampling... ensuring the sampled lens is actually in front of the source
+            if D_L_sampled >= float(p["distance_source"]) - offset_pc:
+                continue 
+                
+            p["distance_blend"] = D_L_sampled
+            p["mu_rel"] = float(priors["mu_rel"].sample(rng))
 
         # Sample the common priors
         t0 = float(priors["t0"].sample(rng))
@@ -1283,8 +1356,7 @@ def generate_trilegal_event_table(
         if cfg.sample_tE_directly:
             tE_sampled = float(priors["tE"].sample(rng))
         else:
-            if cfg.use_trilegal_mass:
-                # Use the actual cataloged mass
+            if cfg.use_trilegal_mass and not cfg.dark_matter_lens:
                 lens_mass = float(p["mass_blend"])
 
                 # I don't think TRILEGAL would return NaN masses but just in case...
@@ -1292,17 +1364,16 @@ def generate_trilegal_event_table(
                     if "lens_mass_solar" in priors:
                         lens_mass = float(priors["lens_mass_solar"].sample(rng))
                     else:
-                        continue # Just skip the event
-
+                        continue  # Just skip the event
             else:
                 # Use the prior
                 lens_mass = float(priors["lens_mass_solar"].sample(rng))
 
-
         # Only sample trajectory angle if parallax is enabled and there are no physical vectors
         angle = None
-        if cfg.enable_parallax and (not cfg.physical_vectors): 
-            angle = float(priors["traj_angle_rad"].sample(rng))
+        if cfg.enable_parallax:
+            if (not cfg.physical_vectors) or cfg.dark_matter_lens:
+                angle = float(priors["traj_angle_rad"].sample(rng))
 
         # optional semi-major axis (for USBL physical s)
         a_au = None
