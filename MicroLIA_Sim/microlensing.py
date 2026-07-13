@@ -473,7 +473,6 @@ def validate_photometry(
     if blend_mags is not None and blend_g is not None:
         raise ValueError(
             "Provide either blend_mags OR blend_g (not both). "
-            "blend_mags = physical blending; blend_g = 'Anibal' method."
         )
 
     if blend_mags is not None:
